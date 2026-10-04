@@ -1,7 +1,7 @@
 {
   "name": "mdj-studio",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MDJ Studio - Markdown Jot Studio - Read. Write. Expand.",
   "author": "Martin Jalaf",
   "repository": {
@@ -64,7 +64,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "artifactName": "MDJ-Studio-Setup-${version}.${ext}"

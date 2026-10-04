@@ -271,7 +271,13 @@ function setupNativeMenu(lang: string = 'en') {
 }
 
 function createWindow() {
-  const iconPath = path.join(__dirname, '../public/icon.png');
+  // In the packaged app `public/` is not shipped; Vite copies it into `dist/`.
+  const iconCandidates = [
+    path.join(__dirname, '../dist/icon.png'),
+    path.join(__dirname, '../public/icon.png'),
+    path.join(__dirname, '../build/icon.png'),
+  ];
+  const iconPath = iconCandidates.find((p) => fs.existsSync(p)) || iconCandidates[0];
   
   if (process.platform === 'darwin' && app.dock) {
     try {

@@ -40,7 +40,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
 
         <div className="modal-body about-modal-body">
           <div className="about-hero">
-            <img src="/icon.png" className="about-brand-icon-hero" alt="MDJ Studio" />
+            <img src={`${import.meta.env.BASE_URL}icon.png`} className="about-brand-icon-hero" alt="MDJ Studio" />
             <h3 className="about-app-title">{appName}</h3>
             <span className="about-version-badge">{t.about.version} {version}</span>
             <p className="about-description">

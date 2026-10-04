@@ -73,7 +73,7 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
 
         <div className="app-logo">
-          <img src="/icon.png" className="app-brand-icon" alt="MDJ Studio" />
+          <img src={`${import.meta.env.BASE_URL}icon.png`} className="app-brand-icon" alt="MDJ Studio" />
           <span className="logo-text">MDJ Studio</span>
           <span className="app-badge">{isElectron() ? t.header.desktop : t.header.web}</span>
         </div>
