@@ -114,6 +114,9 @@ export function App() {
   // Sync settings to localStorage and notify Electron titleBarOverlay & native menu
   useEffect(() => {
     localStorage.setItem('mark_mermaid_settings', JSON.stringify(settings));
+    if (settings.libraryPath) {
+      libraryService.setLibraryPath(settings.libraryPath);
+    }
     if (isElectron()) {
       if (window.electronAPI?.updateTheme) {
         window.electronAPI.updateTheme(settings.theme);
@@ -246,6 +249,30 @@ export function App() {
       }
     }
   }, [activeFile]);
+
+  // Sync Library with local disk
+  const handleSyncLibrary = useCallback(async () => {
+    if (settings.libraryPath) {
+      await libraryService.syncWithDisk();
+      setFolders(libraryService.getFolders());
+      setDocuments(libraryService.getDocuments());
+    }
+  }, [settings.libraryPath]);
+
+  // Auto-sync when window regains focus in Electron
+  useEffect(() => {
+    if (!isElectron()) return;
+    const onFocus = () => {
+      if (settings.libraryPath) {
+        libraryService.syncWithDisk().then(() => {
+          setFolders(libraryService.getFolders());
+          setDocuments(libraryService.getDocuments());
+        }).catch(() => {});
+      }
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [settings.libraryPath]);
 
   // Export to PDF
   const handleExportPDF = useCallback(async () => {
@@ -622,9 +649,10 @@ export function App() {
             setDocuments(libraryService.getDocuments());
             handleSelectDocument(doc);
           }}
-          onCreateFolder={(parentId) => {
-            libraryService.createFolder('Nueva Carpeta', parentId);
+          onCreateFolder={async (parentId) => {
+            const newFolder = await libraryService.createFolder('Nueva Carpeta', parentId);
             setFolders(libraryService.getFolders());
+            return newFolder.id;
           }}
           onDeleteDocument={(docId) => {
             libraryService.deleteDocument(docId);
@@ -634,8 +662,8 @@ export function App() {
               handleSelectDocument(remaining[0]);
             }
           }}
-          onDeleteFolder={(folderId) => {
-            libraryService.deleteFolder(folderId);
+          onDeleteFolder={async (folderId) => {
+            await libraryService.deleteFolder(folderId);
             setFolders(libraryService.getFolders());
             const remaining = libraryService.getDocuments();
             setDocuments(remaining);
@@ -650,14 +678,15 @@ export function App() {
               setActiveFile((prev) => ({ ...prev, name: newName }));
             }
           }}
-          onRenameFolder={(folderId, newName) => {
-            libraryService.renameFolder(folderId, newName);
+          onRenameFolder={async (folderId, newName) => {
+            await libraryService.renameFolder(folderId, newName);
             setFolders(libraryService.getFolders());
           }}
           onToggleFolderExpand={(folderId) => {
             libraryService.toggleFolder(folderId);
             setFolders(libraryService.getFolders());
           }}
+          onSyncLibrary={handleSyncLibrary}
         />
 
         <main className="app-workspace">

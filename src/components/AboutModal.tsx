@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { X, Info, User, Mail, Check, Copy, ExternalLink, Cpu } from 'lucide-react';
+import React from 'react';
+import { X, Info, User, Cpu } from 'lucide-react';
 import { isElectron } from '../services/fileService';
 import { useI18n } from '../i18n';
 
@@ -9,21 +9,13 @@ interface AboutModalProps {
 }
 
 export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
-  const [copied, setCopied] = useState(false);
   const { t } = useI18n();
 
   if (!isOpen) return null;
 
   const appName = 'MDJ Studio';
-  const version = '1.0.0';
+  const version = '1.0.2';
   const author = 'Martin Jalaf';
-  const email = 'martinj@microsoft.com';
-
-  const handleCopyEmail = () => {
-    navigator.clipboard.writeText(email);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -54,26 +46,6 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
                 <User size={15} /> {t.about.author}
               </span>
               <span className="about-value">{author}</span>
-            </div>
-
-            <div className="about-row">
-              <span className="about-label">
-                <Mail size={15} /> {t.about.contact}
-              </span>
-              <div className="about-contact-group">
-                <a href={`mailto:${email}`} className="about-email-link" title={email}>
-                  {email}
-                  <ExternalLink size={13} />
-                </a>
-                <button
-                  className="about-copy-btn"
-                  onClick={handleCopyEmail}
-                  title={t.about.copyEmail}
-                >
-                  {copied ? <Check size={14} className="copied-icon" /> : <Copy size={14} />}
-                  <span>{copied ? t.about.copied : t.about.copyEmail}</span>
-                </button>
-              </div>
             </div>
 
             <div className="about-row">

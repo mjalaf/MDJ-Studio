@@ -133,3 +133,47 @@ export const exportHtmlToDevice = async (filename: string, htmlContent: string):
   URL.revokeObjectURL(url);
   return true;
 };
+
+export const createFolderOnDevice = async (folderPath: string): Promise<boolean> => {
+  if (isElectron() && window.electronAPI?.createFolder) {
+    const res = await window.electronAPI.createFolder(folderPath);
+    return res.success;
+  }
+  return true;
+};
+
+export const renameFolderOnDevice = async (oldPath: string, newPath: string): Promise<boolean> => {
+  if (isElectron() && window.electronAPI?.renameFolder) {
+    const res = await window.electronAPI.renameFolder(oldPath, newPath);
+    return res.success;
+  }
+  return true;
+};
+
+export const deleteFolderOnDevice = async (folderPath: string): Promise<boolean> => {
+  if (isElectron() && window.electronAPI?.deleteFolder) {
+    const res = await window.electronAPI.deleteFolder(folderPath);
+    return res.success;
+  }
+  return true;
+};
+
+export const scanDirectoryOnDevice = async (rootPath: string) => {
+  if (isElectron() && window.electronAPI?.scanDirectory) {
+    return await window.electronAPI.scanDirectory(rootPath);
+  }
+  return { success: false, folders: [], documents: [] };
+};
+
+export const joinPaths = (base: string, ...parts: string[]): string => {
+  const isWindows = base.includes('\\') || /^[a-zA-Z]:/.test(base);
+  const sep = isWindows ? '\\' : '/';
+  let result = base.replace(/[\\/]+$/, '');
+  for (const part of parts) {
+    const clean = part.replace(/^[\\/]+|[\\/]+$/g, '');
+    if (clean) {
+      result += sep + clean;
+    }
+  }
+  return result;
+};

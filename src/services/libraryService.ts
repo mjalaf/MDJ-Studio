@@ -1,5 +1,7 @@
 import type { LibraryDocument, LibraryFolder, DocumentType } from '../types';
 import { extractDocumentMetadata } from '../core/frontMatter';
+import { createFolderOnDevice, renameFolderOnDevice, deleteFolderOnDevice, scanDirectoryOnDevice, joinPaths } from './fileService';
+import { storageManager } from './storage';
 
 const STORAGE_KEY_DOCS = 'mark_mermaid_library_docs';
 const STORAGE_KEY_FOLDERS = 'mark_mermaid_library_folders';
@@ -129,9 +131,158 @@ Safeguard sensitive credentials, API keys, or confidential thoughts with client-
 export class LibraryService {
   private folders: LibraryFolder[] = [];
   private documents: LibraryDocument[] = [];
+  private libraryPath?: string;
 
   constructor() {
     this.load();
+    this.initAsyncStorage().catch(console.warn);
+  }
+
+  public async initAsyncStorage(): Promise<void> {
+    try {
+      await storageManager.init();
+      const sqliteFolders = await storageManager.loadFolders();
+      const sqliteDocs = await storageManager.loadDocuments();
+      if (sqliteFolders.length > 0) {
+        this.folders = sqliteFolders;
+      } else {
+        await storageManager.saveFolders(this.folders);
+      }
+      if (sqliteDocs.length > 0) {
+        this.documents = sqliteDocs;
+      } else {
+        await storageManager.saveDocuments(this.documents);
+      }
+    } catch (err) {
+      console.warn('[LibraryService] SQLite async storage init fallback:', err);
+    }
+  }
+
+  public async reloadFromStorage(): Promise<void> {
+    const folders = await storageManager.loadFolders();
+    const docs = await storageManager.loadDocuments();
+    if (folders.length > 0) this.folders = folders;
+    if (docs.length > 0) this.documents = docs;
+    this.save();
+  }
+
+  public setLibraryPath(path?: string): void {
+    this.libraryPath = path;
+    if (path) {
+      this.syncFoldersToDisk().catch((err) => console.warn('Failed to sync folders to disk:', err));
+    }
+  }
+
+  public getLibraryPath(): string | undefined {
+    return this.libraryPath;
+  }
+
+  public getDiskPathForFolder(folderId: string): string | undefined {
+    if (!this.libraryPath) return undefined;
+    const parts: string[] = [];
+    let currentId: string | undefined = folderId;
+    while (currentId) {
+      const folder = this.folders.find((f) => f.id === currentId);
+      if (!folder) break;
+      parts.unshift(folder.name);
+      currentId = folder.parentId;
+    }
+    if (parts.length === 0) return undefined;
+    return joinPaths(this.libraryPath, ...parts);
+  }
+
+  public async syncFoldersToDisk(): Promise<void> {
+    if (!this.libraryPath) return;
+    await createFolderOnDevice(this.libraryPath);
+    for (const folder of this.folders) {
+      const diskPath = this.getDiskPathForFolder(folder.id);
+      if (diskPath) {
+        folder.path = diskPath;
+        await createFolderOnDevice(diskPath);
+      }
+    }
+    this.save();
+  }
+
+  public async syncWithDisk(): Promise<{ addedDocs: number; addedFolders: number }> {
+    if (!this.libraryPath) return { addedDocs: 0, addedFolders: 0 };
+    const scan = await scanDirectoryOnDevice(this.libraryPath);
+    if (!scan.success) return { addedDocs: 0, addedFolders: 0 };
+
+    let addedFolders = 0;
+    let addedDocs = 0;
+
+    const relPathToFolderId = new Map<string, string>();
+    const sortedFolders = [...scan.folders].sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+
+    for (const f of sortedFolders) {
+      const parentId = f.parentRelativePath ? relPathToFolderId.get(f.parentRelativePath) : undefined;
+      let existing = this.folders.find((x) => 
+        (x.path && x.path.toLowerCase() === f.path.toLowerCase()) ||
+        (x.name === f.name && x.parentId === parentId)
+      );
+
+      if (!existing) {
+        existing = {
+          id: 'folder-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5),
+          name: f.name,
+          parentId,
+          path: f.path,
+          isExpanded: true,
+        };
+        this.folders.push(existing);
+        addedFolders++;
+      } else {
+        existing.path = f.path;
+        if (parentId && existing.parentId !== parentId) {
+          existing.parentId = parentId;
+        }
+      }
+
+      relPathToFolderId.set(f.relativePath, existing.id);
+    }
+
+    for (const d of scan.documents) {
+      const folderId = d.parentRelativePath ? relPathToFolderId.get(d.parentRelativePath) : undefined;
+      let docType: DocumentType = 'markdown';
+      if (d.name.endsWith('.mmd')) docType = 'mermaid';
+      else if (d.name.endsWith('.mdj')) docType = 'mdj';
+
+      const existingDoc = this.documents.find((x) => 
+        (x.path && x.path.toLowerCase() === d.path.toLowerCase()) ||
+        (x.name === d.name && x.folderId === folderId)
+      );
+
+      const { title, tags } = extractDocumentMetadata(d.content, d.name);
+
+      if (existingDoc) {
+        existingDoc.path = d.path;
+        existingDoc.folderId = folderId;
+        if (d.modifiedAt > existingDoc.updatedAt) {
+          existingDoc.content = d.content;
+          existingDoc.title = title || existingDoc.name;
+          existingDoc.tags = tags;
+          existingDoc.updatedAt = d.modifiedAt;
+        }
+      } else {
+        const newDoc: LibraryDocument = {
+          id: 'doc-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5),
+          name: d.name,
+          folderId,
+          path: d.path,
+          title: title || d.name,
+          tags,
+          content: d.content,
+          updatedAt: d.modifiedAt,
+          type: docType,
+        };
+        this.documents.push(newDoc);
+        addedDocs++;
+      }
+    }
+
+    this.save();
+    return { addedDocs, addedFolders };
   }
 
   private load(): void {
@@ -195,6 +346,8 @@ export class LibraryService {
     try {
       localStorage.setItem(STORAGE_KEY_FOLDERS, JSON.stringify(this.folders));
       localStorage.setItem(STORAGE_KEY_DOCS, JSON.stringify(this.documents));
+      storageManager.saveFolders(this.folders).catch(console.warn);
+      storageManager.saveDocuments(this.documents).catch(console.warn);
     } catch (e) {
       console.error('Error saving library data:', e);
     }
@@ -212,22 +365,56 @@ export class LibraryService {
     return this.documents.find((d) => d.id === id);
   }
 
-  public createFolder(name: string, parentId?: string): LibraryFolder {
+  public async createFolder(name: string, parentId?: string): Promise<LibraryFolder> {
+    const trimmed = name.trim() || 'Nueva Carpeta';
     const newFolder: LibraryFolder = {
       id: 'folder-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5),
-      name: name.trim() || 'Nueva Carpeta',
+      name: trimmed,
       parentId,
       isExpanded: true,
     };
+
+    if (parentId) {
+      const parent = this.folders.find((f) => f.id === parentId);
+      if (parent) {
+        parent.isExpanded = true;
+      }
+    }
+
+    if (this.libraryPath) {
+      let diskPath: string;
+      if (parentId) {
+        const parentDiskPath = this.getDiskPathForFolder(parentId) || this.libraryPath;
+        diskPath = joinPaths(parentDiskPath, trimmed);
+      } else {
+        diskPath = joinPaths(this.libraryPath, trimmed);
+      }
+      newFolder.path = diskPath;
+      await createFolderOnDevice(diskPath);
+    }
+
     this.folders.push(newFolder);
     this.save();
     return newFolder;
   }
 
-  public renameFolder(id: string, newName: string): boolean {
+  public async renameFolder(id: string, newName: string): Promise<boolean> {
     const folder = this.folders.find((f) => f.id === id);
     if (!folder) return false;
-    folder.name = newName.trim() || folder.name;
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === folder.name) return false;
+
+    const oldDiskPath = this.getDiskPathForFolder(id);
+    folder.name = trimmed;
+
+    if (this.libraryPath && oldDiskPath) {
+      const newDiskPath = this.getDiskPathForFolder(id);
+      if (newDiskPath) {
+        await renameFolderOnDevice(oldDiskPath, newDiskPath);
+        folder.path = newDiskPath;
+      }
+    }
+
     this.save();
     return true;
   }
@@ -240,7 +427,12 @@ export class LibraryService {
     }
   }
 
-  public deleteFolder(id: string): { deletedDocs: number; deletedFolders: number } {
+  public async deleteFolder(id: string): Promise<{ deletedDocs: number; deletedFolders: number }> {
+    const diskPath = this.getDiskPathForFolder(id);
+    if (this.libraryPath && diskPath) {
+      await deleteFolderOnDevice(diskPath);
+    }
+
     // Collect all subfolder IDs recursively
     const folderIdsToDelete = new Set<string>([id]);
     let added = true;
@@ -278,18 +470,29 @@ export class LibraryService {
 
     const { title, tags } = extractDocumentMetadata(defaultContent, filename);
 
+    let docDiskPath: string | undefined;
+    if (this.libraryPath) {
+      if (folderId) {
+        const folderDisk = this.getDiskPathForFolder(folderId);
+        if (folderDisk) docDiskPath = joinPaths(folderDisk, filename);
+      } else {
+        docDiskPath = joinPaths(this.libraryPath, filename);
+      }
+    }
+
     const newDoc: LibraryDocument = {
       id: 'doc-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5),
       name: filename,
       folderId,
-      title,
+      path: docDiskPath,
+      title: title || filename,
       tags,
       content: defaultContent,
       updatedAt: Date.now(),
       type: docType,
     };
 
-    this.documents.push(newDoc);
+    this.documents.unshift(newDoc);
     this.save();
     return newDoc;
   }

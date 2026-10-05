@@ -419,6 +419,127 @@ ipcMain.handle('shell:openPath', async (_, targetPath: string) => {
   return true;
 });
 
+ipcMain.handle('fs:createFolder', async (_, folderPath: string) => {
+  if (!folderPath) return { success: false, error: 'Path is required' };
+  try {
+    if (!fs.existsSync(folderPath)) {
+      fs.mkdirSync(folderPath, { recursive: true });
+    }
+    return { success: true, folderPath };
+  } catch (err: any) {
+    console.error('Failed to create folder on disk:', err);
+    return { success: false, error: err?.message || String(err) };
+  }
+});
+
+ipcMain.handle('fs:renameFolder', async (_, { oldPath, newPath }: { oldPath: string; newPath: string }) => {
+  if (!oldPath || !newPath) return { success: false, error: 'Both paths are required' };
+  try {
+    if (fs.existsSync(oldPath)) {
+      fs.renameSync(oldPath, newPath);
+    } else {
+      fs.mkdirSync(newPath, { recursive: true });
+    }
+    return { success: true };
+  } catch (err: any) {
+    console.error('Failed to rename folder on disk:', err);
+    return { success: false, error: err?.message || String(err) };
+  }
+});
+
+ipcMain.handle('fs:deleteFolder', async (_, folderPath: string) => {
+  if (!folderPath) return { success: false, error: 'Path is required' };
+  try {
+    if (fs.existsSync(folderPath)) {
+      try {
+        await shell.trashItem(folderPath);
+      } catch {
+        fs.rmSync(folderPath, { recursive: true, force: true });
+      }
+    }
+    return { success: true };
+  } catch (err: any) {
+    console.error('Failed to delete folder on disk:', err);
+    return { success: false, error: err?.message || String(err) };
+  }
+});
+
+ipcMain.handle('fs:scanDirectory', async (_, rootPath: string) => {
+  if (!rootPath || !fs.existsSync(rootPath)) {
+    return { success: false, folders: [], documents: [] };
+  }
+
+  interface ScannedFolder {
+    name: string;
+    path: string;
+    relativePath: string;
+    parentRelativePath?: string;
+  }
+
+  interface ScannedDoc {
+    name: string;
+    path: string;
+    relativePath: string;
+    parentRelativePath?: string;
+    content: string;
+    modifiedAt: number;
+  }
+
+  const folders: ScannedFolder[] = [];
+  const documents: ScannedDoc[] = [];
+
+  function walk(currentDir: string, parentRel?: string) {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === '$RECYCLE.BIN') continue;
+      const fullPath = path.join(currentDir, entry.name);
+      const relPath = parentRel ? `${parentRel}/${entry.name}` : entry.name;
+
+      if (entry.isDirectory()) {
+        folders.push({
+          name: entry.name,
+          path: fullPath,
+          relativePath: relPath,
+          parentRelativePath: parentRel,
+        });
+        walk(fullPath, relPath);
+      } else if (entry.isFile()) {
+        const ext = path.extname(entry.name).toLowerCase();
+        if (['.md', '.mdj', '.mmd', '.markdown', '.txt'].includes(ext)) {
+          try {
+            const content = fs.readFileSync(fullPath, 'utf-8');
+            const stat = fs.statSync(fullPath);
+            documents.push({
+              name: entry.name,
+              path: fullPath,
+              relativePath: relPath,
+              parentRelativePath: parentRel,
+              content,
+              modifiedAt: stat.mtimeMs,
+            });
+          } catch (err) {
+            console.warn(`Could not read ${fullPath}:`, err);
+          }
+        }
+      }
+    }
+  }
+
+  try {
+    walk(rootPath);
+    return { success: true, folders, documents };
+  } catch (err: any) {
+    console.error('Failed to scan directory:', err);
+    return { success: false, error: err?.message || String(err), folders: [], documents: [] };
+  }
+});
+
 ipcMain.handle('html:export', async (_, { defaultFilename, htmlContent }: { defaultFilename: string; htmlContent: string }) => {
   if (!mainWindow) return false;
   const saveDialogResult = await dialog.showSaveDialog(mainWindow, {

@@ -14,6 +14,7 @@ import {
   Search,
   PanelLeftClose,
   PanelLeft,
+  RefreshCw,
 } from 'lucide-react';
 import type { LibraryDocument, LibraryFolder, TreeDisplayMode } from '../types';
 import { libraryService } from '../services/libraryService';
@@ -28,12 +29,13 @@ interface LibrarySidebarProps {
   treeDisplay: TreeDisplayMode;
   onSelectDocument: (doc: LibraryDocument) => void;
   onCreateDocument: (folderId?: string) => void;
-  onCreateFolder: (parentId?: string) => void;
+  onCreateFolder: (parentId?: string) => Promise<string | void> | void;
   onDeleteDocument: (docId: string) => void;
   onDeleteFolder: (folderId: string) => void;
   onRenameDocument: (docId: string, newName: string) => void;
   onRenameFolder: (folderId: string, newName: string) => void;
   onToggleFolderExpand: (folderId: string) => void;
+  onSyncLibrary?: () => Promise<void> | void;
 }
 
 export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
@@ -51,9 +53,23 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
   onRenameDocument,
   onRenameFolder,
   onToggleFolderExpand,
+  onSyncLibrary,
 }) => {
   const [filterText, setFilterText] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
+  const [isSyncing, setIsSyncing] = useState(false);
   const { t } = useI18n();
+
+  const handleSync = async () => {
+    if (!onSyncLibrary || isSyncing) return;
+    setIsSyncing(true);
+    try {
+      await onSyncLibrary();
+    } finally {
+      setTimeout(() => setIsSyncing(false), 500);
+    }
+  };
 
   if (!isOpen) {
     return (
@@ -74,33 +90,55 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
 
   const renderDocLabel = (doc: LibraryDocument) => {
     if (treeDisplay === 'title') {
-      return <span className="doc-primary-title">{doc.title || doc.name}</span>;
+      return <span className="doc-primary-title" onDoubleClick={(e) => startRenameDoc(doc, e)}>{doc.title || doc.name}</span>;
     }
     if (treeDisplay === 'filename') {
-      return <span className="doc-primary-title">{doc.name}</span>;
+      return <span className="doc-primary-title" onDoubleClick={(e) => startRenameDoc(doc, e)}>{doc.name}</span>;
     }
     // 'title-filename'
     return (
-      <div className="doc-title-group">
+      <div className="doc-title-group" onDoubleClick={(e) => startRenameDoc(doc, e)}>
         <span className="doc-primary-title">{doc.title || doc.name}</span>
         {doc.title && doc.title !== doc.name && <span className="doc-sub-filename">{doc.name}</span>}
       </div>
     );
   };
 
-  const handlePromptRenameFolder = (folder: LibraryFolder, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const newName = window.prompt(t.sidebar.promptRename, folder.name);
-    if (newName && newName.trim() && newName !== folder.name) {
-      onRenameFolder(folder.id, newName.trim());
-    }
+  const startRenameFolder = (folder: LibraryFolder, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setEditingId(folder.id);
+    setEditingName(folder.name);
   };
 
-  const handlePromptRenameDoc = (doc: LibraryDocument, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const newName = window.prompt(t.sidebar.promptRename, doc.name);
-    if (newName && newName.trim() && newName !== doc.name) {
-      onRenameDocument(doc.id, newName.trim());
+  const commitRenameFolder = (folderId: string) => {
+    const trimmed = editingName.trim();
+    const currentFolder = folders.find((f) => f.id === folderId);
+    if (trimmed && currentFolder && trimmed !== currentFolder.name) {
+      onRenameFolder(folderId, trimmed);
+    }
+    setEditingId(null);
+  };
+
+  const startRenameDoc = (doc: LibraryDocument, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setEditingId(doc.id);
+    setEditingName(doc.name);
+  };
+
+  const commitRenameDoc = (docId: string) => {
+    const trimmed = editingName.trim();
+    const currentDoc = documents.find((d) => d.id === docId);
+    if (trimmed && currentDoc && trimmed !== currentDoc.name) {
+      onRenameDocument(docId, trimmed);
+    }
+    setEditingId(null);
+  };
+
+  const handleCreateFolder = async (parentId?: string) => {
+    const newId = await onCreateFolder(parentId);
+    if (typeof newId === 'string') {
+      setEditingId(newId);
+      setEditingName('Nueva Carpeta');
     }
   };
 
@@ -159,7 +197,33 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
                 ) : (
                   <Folder size={16} className="folder-icon" />
                 )}
-                <span className="folder-name">{folder.name}</span>
+                {editingId === folder.id ? (
+                  <input
+                    type="text"
+                    className="inline-rename-input"
+                    value={editingName}
+                    autoFocus
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => setEditingName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        commitRenameFolder(folder.id);
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        setEditingId(null);
+                      }
+                    }}
+                    onBlur={() => commitRenameFolder(folder.id)}
+                  />
+                ) : (
+                  <span
+                    className="folder-name"
+                    onDoubleClick={(e) => startRenameFolder(folder, e)}
+                  >
+                    {folder.name}
+                  </span>
+                )}
 
                 <div className="item-actions">
                   <button
@@ -174,7 +238,17 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
                   </button>
                   <button
                     className="item-action-btn"
-                    onClick={(e) => handlePromptRenameFolder(folder, e)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleCreateFolder(folder.id);
+                    }}
+                    title="Nueva subcarpeta"
+                  >
+                    <FolderPlus size={13} />
+                  </button>
+                  <button
+                    className="item-action-btn"
+                    onClick={(e) => startRenameFolder(folder, e)}
                     title={t.sidebar.rename}
                   >
                     <Edit2 size={13} />
@@ -207,12 +281,33 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
               onClick={() => onSelectDocument(doc)}
             >
               {getDocIcon(doc)}
-              {renderDocLabel(doc)}
+              {editingId === doc.id ? (
+                <input
+                  type="text"
+                  className="inline-rename-input"
+                  value={editingName}
+                  autoFocus
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => setEditingName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      commitRenameDoc(doc.id);
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault();
+                      setEditingId(null);
+                    }
+                  }}
+                  onBlur={() => commitRenameDoc(doc.id)}
+                />
+              ) : (
+                renderDocLabel(doc)
+              )}
 
               <div className="item-actions">
                 <button
                   className="item-action-btn"
-                  onClick={(e) => handlePromptRenameDoc(doc, e)}
+                  onClick={(e) => startRenameDoc(doc, e)}
                   title={t.sidebar.rename}
                 >
                   <Edit2 size={13} />
@@ -241,6 +336,16 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
           <span>{t.sidebar.title}</span>
         </div>
         <div className="sidebar-header-actions">
+          {onSyncLibrary && (
+            <button
+              className={`icon-btn-xs ${isSyncing ? 'spinning' : ''}`}
+              onClick={handleSync}
+              title="Sincronizar con disco"
+              disabled={isSyncing}
+            >
+              <RefreshCw size={14} className={isSyncing ? 'spin-animation' : ''} />
+            </button>
+          )}
           <button
             className="icon-btn-xs"
             onClick={() => onCreateDocument()}
@@ -250,7 +355,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
           </button>
           <button
             className="icon-btn-xs"
-            onClick={() => onCreateFolder()}
+            onClick={() => handleCreateFolder()}
             title={t.sidebar.newFolder}
           >
             <FolderPlus size={15} />

@@ -8,6 +8,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   exportHTML: (data: { defaultFilename?: string; htmlContent: string }) => ipcRenderer.invoke('html:export', data),
   selectDirectory: () => ipcRenderer.invoke('dialog:selectDirectory'),
   openPath: (targetPath: string) => ipcRenderer.invoke('shell:openPath', targetPath),
+  createFolder: (folderPath: string) => ipcRenderer.invoke('fs:createFolder', folderPath),
+  renameFolder: (oldPath: string, newPath: string) => ipcRenderer.invoke('fs:renameFolder', { oldPath, newPath }),
+  deleteFolder: (folderPath: string) => ipcRenderer.invoke('fs:deleteFolder', folderPath),
+  scanDirectory: (rootPath: string) => ipcRenderer.invoke('fs:scanDirectory', rootPath),
   onMenuAction: (callback: (action: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, action: string) => callback(action);
     ipcRenderer.on('menu-action', handler);

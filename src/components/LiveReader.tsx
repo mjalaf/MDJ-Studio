@@ -10,7 +10,15 @@ import {
   Columns, 
   KeyRound, 
   AlertCircle,
-  Code2
+  Code2,
+  Plus,
+  Heading1,
+  Heading2,
+  Heading3,
+  List,
+  Quote,
+  GitFork,
+  ChevronDown
 } from 'lucide-react';
 import type { EditorSettings, ActiveFile } from '../types';
 import type { EditorRef } from './Editor';
@@ -94,6 +102,43 @@ const VisualEditableSegment: React.FC<VisualEditableSegmentProps> = ({
       e.preventDefault();
       handleInput();
       onSave?.();
+      return;
+    }
+
+    // When Enter is pressed inside an H1-H6 heading, create a new paragraph below it
+    if (e.key === 'Enter' && !e.shiftKey) {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0) {
+        let node: Node | null = sel.anchorNode;
+        let headingEl: HTMLElement | null = null;
+        while (node && node !== containerRef.current) {
+          if (node.nodeType === Node.ELEMENT_NODE && /^(H[1-6])$/i.test((node as HTMLElement).tagName)) {
+            headingEl = node as HTMLElement;
+            break;
+          }
+          node = node.parentNode;
+        }
+
+        if (headingEl) {
+          e.preventDefault();
+          const newP = document.createElement('p');
+          newP.innerHTML = '<br>';
+          if (headingEl.nextSibling) {
+            headingEl.parentNode?.insertBefore(newP, headingEl.nextSibling);
+          } else {
+            headingEl.parentNode?.appendChild(newP);
+          }
+
+          const newRange = document.createRange();
+          newRange.setStart(newP, 0);
+          newRange.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(newRange);
+
+          handleInput();
+          return;
+        }
+      }
     }
   };
 
@@ -207,6 +252,36 @@ export const LiveReader = forwardRef<EditorRef, LiveReaderProps>(({
 
   // Sub-mode inside Live Reader: default is 'reader' (Visual In-Place Editing on Result)
   const [liveMode, setLiveMode] = useState<LiveReaderMode>('reader');
+  const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
+
+  const handleAppendBlock = (type: 'p' | 'h1' | 'h2' | 'h3' | 'mermaid' | 'list' | 'quote') => {
+    setIsAddMenuOpen(false);
+    let snippet = '';
+    if (type === 'p') snippet = '\n\nNuevo párrafo...';
+    else if (type === 'h1') snippet = '\n\n# Nuevo Título 1';
+    else if (type === 'h2') snippet = '\n\n## Nuevo Subtítulo';
+    else if (type === 'h3') snippet = '\n\n### Nueva Sección';
+    else if (type === 'mermaid') snippet = '\n\n```mermaid\ngraph TD\n    A[Inicio] --> B[Fin]\n```';
+    else if (type === 'list') snippet = '\n\n- Elemento 1\n- Elemento 2';
+    else if (type === 'quote') snippet = '\n\n> Cita o nota importante...';
+
+    const newContent = activeFile.content.trimEnd() + snippet + '\n';
+    onChange(newContent, true);
+
+    setTimeout(() => {
+      const editables = containerRef.current?.querySelectorAll('.visual-editable-content');
+      if (editables && editables.length > 0) {
+        const last = editables[editables.length - 1] as HTMLElement;
+        last.focus();
+        const range = document.createRange();
+        range.selectNodeContents(last);
+        range.collapse(false);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+      }
+    }, 60);
+  };
 
   // Decrypted protected blocks state
   const [decryptedBlocks, setDecryptedBlocks] = useState<{ [blockId: string]: string }>({});
@@ -234,55 +309,78 @@ export const LiveReader = forwardRef<EditorRef, LiveReaderProps>(({
     insertText: (before: string, after: string = '', defaultText: string = '') => {
       if (liveMode === 'reader') {
         const sel = window.getSelection();
-        if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
-          if (before === '**') {
-            document.execCommand('bold');
-            return;
-          }
-          if (before === '*') {
-            document.execCommand('italic');
-            return;
-          }
-          if (before === '~~') {
-            document.execCommand('strikeThrough');
-            return;
-          }
-          if (before.startsWith('#')) {
-            const level = Math.min(6, before.trim().length);
-            document.execCommand('formatBlock', false, `<h${level}>`);
-            return;
-          }
-          if (before === '- ') {
-            document.execCommand('insertUnorderedList');
-            return;
-          }
-          if (before === '1. ') {
-            document.execCommand('insertOrderedList');
-            return;
-          }
-          if (before === '> ') {
-            document.execCommand('formatBlock', false, '<blockquote>');
-            return;
-          }
-        }
-      }
 
-      // If in writer mode or inserting complex block, handle in textarea
-      const textarea = textareaRef.current;
-      if (!textarea) {
-        setLiveMode('writer');
-        setTimeout(() => {
-          const ta = textareaRef.current;
-          if (!ta) return;
-          const start = ta.selectionStart;
-          const end = ta.selectionEnd;
-          const selectedText = activeFile.content.substring(start, end) || defaultText;
-          const newValue =
-            activeFile.content.substring(0, start) + before + selectedText + after + activeFile.content.substring(end);
-          onChange(newValue, false);
-        }, 50);
+        // 1. Heading formatting (H1, H2, H3, etc.): converts block at caret or selection
+        if (before.startsWith('#')) {
+          const level = Math.min(6, before.trim().length);
+          document.execCommand('formatBlock', false, `<h${level}>`);
+          const activeEditable = (document.activeElement?.closest('.visual-editable-content') ||
+            containerRef.current?.querySelector('.visual-editable-content')) as HTMLElement | null;
+          if (activeEditable) {
+            activeEditable.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          return;
+        }
+
+        // 2. Inline styles
+        if (before === '**') {
+          document.execCommand('bold');
+          return;
+        }
+        if (before === '*') {
+          document.execCommand('italic');
+          return;
+        }
+        if (before === '~~') {
+          document.execCommand('strikeThrough');
+          return;
+        }
+        if (before === '`') {
+          const selText = sel?.toString() || defaultText || 'codigo';
+          document.execCommand('insertHTML', false, `<code>${selText}</code>`);
+          return;
+        }
+
+        // 3. Lists and Quotes
+        if (before === '- ') {
+          document.execCommand('insertUnorderedList');
+          return;
+        }
+        if (before === '1. ') {
+          document.execCommand('insertOrderedList');
+          return;
+        }
+        if (before === '> ') {
+          document.execCommand('formatBlock', false, '<blockquote>');
+          return;
+        }
+
+        // 4. Diagram / Code / MDJ Block Insertion (append directly to content without switching view)
+        if (before.includes('```mermaid') || before.startsWith('```') || before.startsWith('--')) {
+          const blockText = before + (defaultText || '') + after;
+          const currentContent = activeFile.content.trimEnd();
+          onChange(currentContent + '\n\n' + blockText + '\n\n', false);
+          return;
+        }
+
+        // 5. Default text insertion in-place
+        if (defaultText || before) {
+          const insertion = before + (sel?.toString() || defaultText) + after;
+          document.execCommand('insertText', false, insertion);
+          const activeEditable = (document.activeElement?.closest('.visual-editable-content') ||
+            containerRef.current?.querySelector('.visual-editable-content')) as HTMLElement | null;
+          if (activeEditable) {
+            activeEditable.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          return;
+        }
+
         return;
       }
+
+      // If in writer mode or hybrid mode, handle in textarea
+      const textarea = textareaRef.current;
+      if (!textarea) return;
 
       const start = textarea.selectionStart;
       const end = textarea.selectionEnd;
@@ -773,6 +871,56 @@ export const LiveReader = forwardRef<EditorRef, LiveReaderProps>(({
               className="live-reader-formatted markdown-body live-visual-interactive"
             >
               {renderedSegments.map((seg, idx) => renderSegmentItem(seg, idx))}
+            </div>
+
+            {/* Quick Section / Block Inserter (+) */}
+            <div className="live-reader-add-section-bar">
+              <div className="add-section-dropdown-wrapper">
+                <button
+                  type="button"
+                  className="add-section-main-btn"
+                  onClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
+                >
+                  <Plus size={15} />
+                  <span>
+                    {settings.language === 'es' ? 'Añadir nueva sección' : 'Add new section'}
+                  </span>
+                  <ChevronDown size={14} className={isAddMenuOpen ? 'chevron-rotated' : ''} />
+                </button>
+
+                {isAddMenuOpen && (
+                  <div className="add-section-menu">
+                    <button type="button" onClick={() => handleAppendBlock('p')}>
+                      <Type size={14} />
+                      <span>{settings.language === 'es' ? 'Párrafo de texto' : 'Text paragraph'}</span>
+                    </button>
+                    <button type="button" onClick={() => handleAppendBlock('h1')}>
+                      <Heading1 size={14} />
+                      <span>{settings.language === 'es' ? 'Título principal (H1)' : 'Heading 1 (H1)'}</span>
+                    </button>
+                    <button type="button" onClick={() => handleAppendBlock('h2')}>
+                      <Heading2 size={14} />
+                      <span>{settings.language === 'es' ? 'Subtítulo (H2)' : 'Subheading (H2)'}</span>
+                    </button>
+                    <button type="button" onClick={() => handleAppendBlock('h3')}>
+                      <Heading3 size={14} />
+                      <span>{settings.language === 'es' ? 'Sección (H3)' : 'Section (H3)'}</span>
+                    </button>
+                    <button type="button" onClick={() => handleAppendBlock('mermaid')}>
+                      <GitFork size={14} />
+                      <span>{settings.language === 'es' ? 'Diagrama Mermaid' : 'Mermaid Diagram'}</span>
+                    </button>
+                    <button type="button" onClick={() => handleAppendBlock('list')}>
+                      <List size={14} />
+                      <span>{settings.language === 'es' ? 'Lista de viñetas' : 'Bullet List'}</span>
+                    </button>
+                    <button type="button" onClick={() => handleAppendBlock('quote')}>
+                      <Quote size={14} />
+                      <span>{settings.language === 'es' ? 'Cita destacada' : 'Blockquote'}</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="live-reader-footer-actions">

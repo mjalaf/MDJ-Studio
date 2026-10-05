@@ -43,6 +43,7 @@ export interface LibraryFolder {
   name: string;
   parentId?: string;
   isExpanded?: boolean;
+  path?: string;
 }
 
 export interface LibraryDocument {
@@ -85,6 +86,15 @@ export interface ElectronAPI {
   exportHTML: (data: { defaultFilename?: string; htmlContent: string }) => Promise<boolean>;
   selectDirectory: () => Promise<string | null>;
   openPath: (targetPath: string) => Promise<boolean>;
+  createFolder: (folderPath: string) => Promise<{ success: boolean; error?: string }>;
+  renameFolder: (oldPath: string, newPath: string) => Promise<{ success: boolean; error?: string }>;
+  deleteFolder: (folderPath: string) => Promise<{ success: boolean; error?: string }>;
+  scanDirectory: (rootPath: string) => Promise<{
+    success: boolean;
+    error?: string;
+    folders: Array<{ name: string; path: string; relativePath: string; parentRelativePath?: string }>;
+    documents: Array<{ name: string; path: string; relativePath: string; parentRelativePath?: string; content: string; modifiedAt: number }>;
+  }>;
   onMenuAction: (callback: (action: string) => void) => () => void;
   updateTheme?: (theme: string) => Promise<boolean>;
   updateLanguage?: (language: AppLanguage) => Promise<boolean>;
